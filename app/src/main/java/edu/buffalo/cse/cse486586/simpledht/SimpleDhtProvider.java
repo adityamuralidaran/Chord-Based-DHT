@@ -47,11 +47,17 @@ public class SimpleDhtProvider extends ContentProvider {
     static final String MSG_PREDECESSOR = "pre";
     static final String MSG_SUCCESSOR = "suc";
     static final String MSG_EMPTY = "#";
+    static final String MSG_QUERY_RES_COUNT = "count";
+    static final String MSG_QUERY_RES_KEYS = "keys";
+    static final String MSG_QUERY_RES_VALUES = "values";
     static final String TYPE_INSERT = "insert"; // type to handle insert of (key,value) pair
     static final String TYPE_JOIN = "join"; // type to change the predecessor and successor port
                                             // in case of a new node join
     static final String TYPE_JOIN_HANDLE = "joinhandle"; // type to handle new node join in the chord
-    static final String JOIN_HANDLE_PORT = "11108"; // port number that will be handling the node join request
+    static final String TYPE_QUERY_ALL = "queryall";
+    static final String TYPE_QUERY_ALL_RESPONSE = "queryallres";
+
+    static final String JOIN_HANDLE_PORT = "5554"; // port number that will be handling the node join request
     //Code Source Projecr 2b
     public static String DB_NAME = "GroupMessenger.db";
     public static String TABLE_NAME = "MessageHistory";
@@ -92,9 +98,10 @@ public class SimpleDhtProvider extends ContentProvider {
     public boolean onCreate() {
         try {
             // Code Source: project 2b
+            Log.v(TAG, "into on create");
             TelephonyManager tel = (TelephonyManager) this.getContext().getSystemService(Context.TELEPHONY_SERVICE);
             String portStr = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
-            final String myPort = String.valueOf((Integer.parseInt(portStr) * 2));
+            final String myPort = String.valueOf((Integer.parseInt(portStr)));
             Node = new NodeObject(myPort,this.genHash(myPort),myPort,this.genHash(myPort),myPort,this.genHash(myPort));
             try {
                 ServerSocket serverSocket = new ServerSocket(SERVER_PORT);
@@ -105,6 +112,7 @@ public class SimpleDhtProvider extends ContentProvider {
                 //return;
             }
 
+
             // Message triggered to emulator 5554 when the new node enters the chord-DHT
             if(Node.getMyPort().compareTo(JOIN_HANDLE_PORT) != 0) {
                 String msg = (new JSONObject()
@@ -114,6 +122,7 @@ public class SimpleDhtProvider extends ContentProvider {
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, JOIN_HANDLE_PORT);
             }
 
+            Log.v(TAG, "node : "+Node.getMyPort()+" node hash : "+Node.getMyPort_hash());
         }
         catch (NoSuchAlgorithmException e){
             Log.e(TAG, "OnCreate - NoSuchAlgorithmException");
@@ -130,8 +139,15 @@ public class SimpleDhtProvider extends ContentProvider {
 
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
-        // TODO Auto-generated method stub
-        return 0;
+        if(selection.equals("@")){
+            return db.delete(TABLE_NAME,null,selectionArgs);
+        }
+        if(selection.equals("*")){
+            // TODO: Required Change
+            return db.delete(TABLE_NAME,null,selectionArgs);
+        }
+        Log.v("delete", selection);
+        return db.delete(TABLE_NAME,"key = '" +selection + "'",selectionArgs);
     }
 
     @Override
@@ -159,6 +175,8 @@ public class SimpleDhtProvider extends ContentProvider {
                     (keyHash.compareTo(Node.getMyPort_hash()) < 0 && Node.getPrePort_hash().compareTo(Node.getMyPort_hash()) > 0) ||
                     (keyHash.compareTo(Node.getMyPort_hash()) > 0 && Node.getPrePort_hash().compareTo(Node.getMyPort_hash()) > 0
                             && keyHash.compareTo(Node.getPrePort_hash()) > 0)) {
+                Log.v("insert", values.toString());
+                Log.v("insert vals","key= "+key+" , key hash= "+keyHash);
                 tempVal = db.insert(TABLE_NAME, null, values);
             }
             // move to successor
@@ -177,8 +195,6 @@ public class SimpleDhtProvider extends ContentProvider {
                         .put(MSG_FROM,Node.getMyPort())).toString();
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getPrePort());
             }
-
-            Log.v("insert", values.toString());
         }
         catch (NoSuchAlgorithmException e){
             Log.e(TAG, "Insert - NoSuchAlgorithmException");
@@ -191,6 +207,16 @@ public class SimpleDhtProvider extends ContentProvider {
     @Override
     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs,
             String sortOrder) {
+
+        if(selection.equals("@")){
+            Cursor cursor = db.query(TABLE_NAME,projection,null,selectionArgs,null,null,sortOrder);
+            return cursor;
+        }
+        if(selection.equals("*")){
+            // TODO: change required
+            Cursor cursor = db.query(TABLE_NAME,projection,null,selectionArgs,null,null,sortOrder);
+            return cursor;
+        }
         // Code Source Project 2b
         Cursor cursor = db.query(TABLE_NAME,projection,"key = '" +selection + "'",selectionArgs,null,null,sortOrder);
         Log.v("query", selection);
@@ -292,12 +318,41 @@ public class SimpleDhtProvider extends ContentProvider {
                         .put(MSG_FROM,Node.getMyPort())).toString();
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getPrePort());
             }
+
+            Log.v(TAG, "successor node : "+Node.getSucPort());
+            Log.v(TAG, "predecessor node : "+Node.getPrePort());
         }
         catch (JSONException e){
             Log.e(TAG, "nodeJoinHandler - JSON Exception");
         }
         catch (NoSuchAlgorithmException e){
             Log.e(TAG, "nodeJoinHandler - NoSuchAlgorithmException");
+        }
+    }
+
+    // Handles message type 'join' that helps the node join by changing the
+    // successor and predecessor in chord
+    public void joinNodes(JSONObject obj){
+        try {
+            String predecessor = (String) obj.get(MSG_PREDECESSOR);
+            String successor = (String) obj.get(MSG_SUCCESSOR);
+
+            if(!predecessor.equals(MSG_EMPTY)){
+                Node.setPrePort(predecessor);
+                Node.setPrePort_hash(genHash(predecessor));
+            }
+            if(!successor.equals(MSG_EMPTY)){
+                Node.setSucPort(successor);
+                Node.setSucPort_hash(genHash(successor));
+            }
+            Log.v(TAG, "successor node : "+Node.getSucPort());
+            Log.v(TAG, "predecessor node : "+Node.getPrePort());
+         }
+        catch(JSONException e){
+            Log.e(TAG, "joinNodes - JSON Exception");
+        }
+        catch(NoSuchAlgorithmException e){
+            Log.e(TAG, "joinNodes - NoSuchAlgorithmException");
         }
     }
 
@@ -357,7 +412,7 @@ public class SimpleDhtProvider extends ContentProvider {
 
                 // Handling message of type 'join'
                 if(msgType.trim().equals(TYPE_JOIN)){
-
+                    joinNodes(obj);
                 }
 
             }
@@ -380,8 +435,9 @@ public class SimpleDhtProvider extends ContentProvider {
         @Override
         protected Void doInBackground(String... msgs) {
             try {
+                String port = String.valueOf((Integer.parseInt(msgs[1]) * 2));
                 Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-                        Integer.parseInt(msgs[1]));
+                        Integer.parseInt(port));
                 String msgToSend = msgs[0];
                 DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
                 outputStream.writeUTF(msgToSend);
