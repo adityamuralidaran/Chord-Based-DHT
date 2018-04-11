@@ -65,6 +65,8 @@ public class SimpleDhtProvider extends ContentProvider {
     static final String TYPE_QUERY_ALL_RESPONSE = "queryallres";
     static final String TYPE_QUERY_KEY = "querykey";
     static final String TYPE_QUERY_KEY_RESPONSE = "querykeyres";
+    static final String TYPE_DELETE_ALL = "deleteall";
+    static final String TYPE_DELETE_KEY = "deletekey";
 
     static final String JOIN_HANDLE_PORT = "5554"; // port number that will be handling the node join request
     //Code Source Projecr 2b
@@ -160,15 +162,65 @@ public class SimpleDhtProvider extends ContentProvider {
 
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
+
         if(selection.equals("@")){
             return db.delete(TABLE_NAME,null,selectionArgs);
         }
+
         if(selection.equals("*")){
-            // TODO: Required Change
+            if(!Node.getPrePort().equals(Node.getMyPort())){
+                try {
+                    String msg = (new JSONObject().put(MSG_TYPE, TYPE_DELETE_ALL)
+                            .put(MSG_FROM, Node.getMyPort())).toString();
+                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
+                }
+                catch (JSONException e){
+                    Log.e(TAG, "Delete - JSON Exception");
+                }
+            }
             return db.delete(TABLE_NAME,null,selectionArgs);
         }
+
+        // Delete a given key
+        else{
+            deleteHelper(selection);
+        }
         Log.v("delete", selection);
-        return db.delete(TABLE_NAME,"key = '" +selection + "'",selectionArgs);
+        return 0;
+    }
+
+    public void deleteHelper(String key){
+        try{
+            String keyHash = this.genHash(key);
+            if ((keyHash.compareTo(Node.getMyPort_hash()) == 0) ||
+                    (Node.getPrePort().compareTo(Node.getMyPort()) == 0)||
+                    (keyHash.compareTo(Node.getMyPort_hash()) < 0 && keyHash.compareTo(Node.getPrePort_hash()) > 0) ||
+                    (keyHash.compareTo(Node.getMyPort_hash()) < 0 && Node.getPrePort_hash().compareTo(Node.getMyPort_hash()) > 0) ||
+                    (keyHash.compareTo(Node.getMyPort_hash()) > 0 && Node.getPrePort_hash().compareTo(Node.getMyPort_hash()) > 0
+                            && keyHash.compareTo(Node.getPrePort_hash()) > 0)){
+                db.delete(TABLE_NAME,"key = '" +key + "'",null);
+            }
+            // move to successor
+            else if (keyHash.compareTo(Node.getMyPort_hash()) > 0){
+                String msg = (new JSONObject().put(MSG_TYPE, TYPE_DELETE_KEY)
+                        .put(KEY, key)
+                        .put(MSG_FROM,Node.getMyPort())).toString();
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
+            }
+            //move to predecessor
+            else if (keyHash.compareTo(Node.getMyPort_hash()) < 0) {
+                String msg = (new JSONObject().put(MSG_TYPE, TYPE_DELETE_KEY)
+                        .put(KEY, key)
+                        .put(MSG_FROM,Node.getMyPort())).toString();
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getPrePort());
+            }
+        }
+        catch (JSONException e){
+            Log.e(TAG, "Delete Helper - JSON Exception");
+        }
+        catch (NoSuchAlgorithmException e){
+            Log.e(TAG, "Delete Helper - NoSuchAlgorithm Exception");
+        }
     }
 
     @Override
@@ -532,6 +584,20 @@ public class SimpleDhtProvider extends ContentProvider {
                     String strReceived = inputStream.readUTF().trim();
                     JSONObject obj = new JSONObject(strReceived);
                     String msgType = (String) obj.get(MSG_TYPE);
+
+                    // Handling message of type 'deleteall'
+                    if(msgType.trim().equals(TYPE_DELETE_ALL)){
+                        String from = (String) obj.get(MSG_FROM);
+                        if(!from.equals(Node.getMyPort())){
+                            db.delete(TABLE_NAME,null,null);
+                            new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, strReceived, Node.getSucPort());
+                        }
+                    }
+
+                    // Handling message of type 'deletekey'
+                    if(msgType.trim().equals(TYPE_DELETE_KEY)){
+                        deleteHelper((String)obj.get(KEY));
+                    }
 
                     // Handling message of type 'queryallres'
                     if(msgType.trim().equals(TYPE_QUERY_ALL_RESPONSE)){
