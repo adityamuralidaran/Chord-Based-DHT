@@ -42,8 +42,6 @@ public class SimpleDhtProvider extends ContentProvider {
 
     //Code Source: Project 2b
     static final String TAG = SimpleDhtProvider.class.getSimpleName();
-    static final String[] Ports_Array = {"11108","11112","11116","11120","11124"};
-    static final List<String> REMOTE_PORTS = new ArrayList<String>(Arrays.asList(Ports_Array));
     static final int SERVER_PORT = 10000;
     static final String KEY = "key";
     static final String VALUE = "value";
@@ -61,12 +59,12 @@ public class SimpleDhtProvider extends ContentProvider {
     static final String TYPE_JOIN = "join"; // type to change the predecessor and successor port
                                             // in case of a new node join
     static final String TYPE_JOIN_HANDLE = "joinhandle"; // type to handle new node join in the chord
-    static final String TYPE_QUERY_ALL = "queryall";
-    static final String TYPE_QUERY_ALL_RESPONSE = "queryallres";
-    static final String TYPE_QUERY_KEY = "querykey";
-    static final String TYPE_QUERY_KEY_RESPONSE = "querykeyres";
-    static final String TYPE_DELETE_ALL = "deleteall";
-    static final String TYPE_DELETE_KEY = "deletekey";
+    static final String TYPE_QUERY_ALL = "queryall"; // type to handle query all request
+    static final String TYPE_QUERY_ALL_RESPONSE = "queryallres"; // type to handle query all response
+    static final String TYPE_QUERY_KEY = "querykey"; // type to handle query key request
+    static final String TYPE_QUERY_KEY_RESPONSE = "querykeyres"; // type to handle query key response
+    static final String TYPE_DELETE_ALL = "deleteall"; // type to handle delete all request
+    static final String TYPE_DELETE_KEY = "deletekey"; // type to handle delete key request
 
     static final String JOIN_HANDLE_PORT = "5554"; // port number that will be handling the node join request
     //Code Source Projecr 2b
@@ -75,8 +73,8 @@ public class SimpleDhtProvider extends ContentProvider {
     public static String Create_Query = "CREATE TABLE " + TABLE_NAME +
             "(key TEXT PRIMARY KEY, value TEXT);";
     public SQLiteDatabase db;
-    public static final String[] projections = {"key","value"};
 
+    // Class object to hold current, successor and predecessor port number and its hash in Chord-DHT
     public static NodeObject Node;
 
 
@@ -133,6 +131,7 @@ public class SimpleDhtProvider extends ContentProvider {
             catch (IOException e) {
                 Log.e(TAG, "Can't create a ServerSocket");
                 //return;
+
             }
 
 
@@ -718,9 +717,6 @@ public class SimpleDhtProvider extends ContentProvider {
              * The following code displays what is received in doInBackground().
              */
             }
-            /*catch (JSONException e){
-                Log.e(TAG, "failed in onProgressUpdate - JSON Exception");
-            }*/
             catch(Exception e){
                 Log.e(TAG, "failed in onProgressUpdate ");
                 e.printStackTrace();
