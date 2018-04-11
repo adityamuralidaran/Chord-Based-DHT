@@ -21,6 +21,8 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.database.Cursor;
+import android.database.MatrixCursor;
+import android.database.MergeCursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.net.Uri;
@@ -31,6 +33,10 @@ import android.widget.TextView;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class SimpleDhtProvider extends ContentProvider {
 
@@ -47,15 +53,18 @@ public class SimpleDhtProvider extends ContentProvider {
     static final String MSG_PREDECESSOR = "pre";
     static final String MSG_SUCCESSOR = "suc";
     static final String MSG_EMPTY = "#";
-    static final String MSG_QUERY_RES_COUNT = "count";
-    static final String MSG_QUERY_RES_KEYS = "keys";
-    static final String MSG_QUERY_RES_VALUES = "values";
+    static final String MSG_COUNT = "count";
+    static final String MSG_QUERY_RES_COUNT = "rescount";
+    static final String MSG_QUERY_RES_KEY = "k";
+    static final String MSG_QUERY_RES_VALUE = "v";
     static final String TYPE_INSERT = "insert"; // type to handle insert of (key,value) pair
     static final String TYPE_JOIN = "join"; // type to change the predecessor and successor port
                                             // in case of a new node join
     static final String TYPE_JOIN_HANDLE = "joinhandle"; // type to handle new node join in the chord
     static final String TYPE_QUERY_ALL = "queryall";
     static final String TYPE_QUERY_ALL_RESPONSE = "queryallres";
+    static final String TYPE_QUERY_KEY = "querykey";
+    static final String TYPE_QUERY_KEY_RESPONSE = "querykeyres";
 
     static final String JOIN_HANDLE_PORT = "5554"; // port number that will be handling the node join request
     //Code Source Projecr 2b
@@ -67,6 +76,18 @@ public class SimpleDhtProvider extends ContentProvider {
     public static final String[] projections = {"key","value"};
 
     public static NodeObject Node;
+
+
+    // Lock for Query All Statement
+    public static Lock queryAllLock = new ReentrantLock();
+    public static MatrixCursor queryAllCursor;
+    public static int queryAllCount = 0;
+    public static int queryAllTotalCount = -1;
+
+    // Lock for Query Key Statement
+    public static Lock queryKeyLock = new ReentrantLock();
+    public static MatrixCursor queryKeyCursor;
+
 
     private static Uri buildUri(String scheme, String authority) {
         Uri.Builder uriBuilder = new Uri.Builder();
@@ -208,19 +229,158 @@ public class SimpleDhtProvider extends ContentProvider {
     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs,
             String sortOrder) {
 
-        if(selection.equals("@")){
-            Cursor cursor = db.query(TABLE_NAME,projection,null,selectionArgs,null,null,sortOrder);
-            return cursor;
-        }
-        if(selection.equals("*")){
-            // TODO: change required
-            Cursor cursor = db.query(TABLE_NAME,projection,null,selectionArgs,null,null,sortOrder);
-            return cursor;
-        }
-        // Code Source Project 2b
-        Cursor cursor = db.query(TABLE_NAME,projection,"key = '" +selection + "'",selectionArgs,null,null,sortOrder);
         Log.v("query", selection);
-        return cursor;
+
+        if (selection.equals("@")) {
+            Cursor cursor = db.query(TABLE_NAME, projection, null, selectionArgs, null, null, sortOrder);
+            return cursor;
+        }
+        if (selection.equals("*")) {
+            // TODO: change required
+            Cursor cursor = db.query(TABLE_NAME, projection, null, selectionArgs, null, null, sortOrder);
+            queryAllCursor = new MatrixCursor(new String[]{KEY, VALUE});
+            while (cursor.moveToNext()) {
+                String k = cursor.getString(cursor.getColumnIndex(KEY));
+                String v = cursor.getString(cursor.getColumnIndex(VALUE));
+                queryAllCursor.addRow(new Object[]{k, v});
+            }
+            if(!Node.getPrePort().equals(Node.getMyPort())) {
+                try {
+                    String msg = (new JSONObject().put(MSG_TYPE, TYPE_QUERY_ALL)
+                            .put(MSG_COUNT, "0")
+                            .put(MSG_FROM, Node.getMyPort())).toString();
+                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
+                    synchronized (queryAllLock) {
+                        queryAllLock.wait();
+                    }
+
+                } catch (JSONException e) {
+                    Log.e(TAG, "query all - JSON Exception");
+                } catch (InterruptedException e) {
+                    Log.e(TAG, "query all - Interrupted Exception");
+                }
+            }
+            queryAllCount = 0;
+            queryAllTotalCount = -1;
+            return queryAllCursor;
+        }
+        // query key handler
+        else {
+            return queryHelper(projection,selection,selectionArgs,sortOrder);
+        }
+
+    }
+
+
+    public Cursor queryHelper(String[] projection, String selection, String[] selectionArgs,
+                              String sortOrder){
+        try {
+            String key = selection;
+            String keyHash = this.genHash(key);
+            if ((keyHash.compareTo(Node.getMyPort_hash()) == 0) ||
+                    (Node.getPrePort().compareTo(Node.getMyPort()) == 0) ||
+                    (keyHash.compareTo(Node.getMyPort_hash()) < 0 && keyHash.compareTo(Node.getPrePort_hash()) > 0) ||
+                    (keyHash.compareTo(Node.getMyPort_hash()) < 0 && Node.getPrePort_hash().compareTo(Node.getMyPort_hash()) > 0) ||
+                    (keyHash.compareTo(Node.getMyPort_hash()) > 0 && Node.getPrePort_hash().compareTo(Node.getMyPort_hash()) > 0
+                            && keyHash.compareTo(Node.getPrePort_hash()) > 0)) {
+
+                Cursor cursor = db.query(TABLE_NAME, projection, "key = '" + selection + "'", selectionArgs, null, null, sortOrder);
+                return cursor;
+            }
+            // Move to successor
+            else if (keyHash.compareTo(Node.getMyPort_hash()) > 0) {
+                queryKeyCursor = new MatrixCursor(new String[]{KEY, VALUE});
+                String msg = (new JSONObject()
+                        .put(MSG_TYPE,TYPE_QUERY_KEY)
+                        .put(MSG_FROM,Node.getMyPort())
+                        .put(KEY,key)).toString();
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
+                synchronized (queryKeyLock) {
+                    queryKeyLock.wait();
+                }
+
+                return queryKeyCursor;
+            }
+            // Move to my predecessor
+            else {
+                queryKeyCursor = new MatrixCursor(new String[]{KEY, VALUE});
+                String msg = (new JSONObject()
+                        .put(MSG_TYPE,TYPE_QUERY_KEY)
+                        .put(MSG_FROM,Node.getMyPort())
+                        .put(KEY,key)).toString();
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getPrePort());
+                synchronized (queryKeyLock) {
+                    queryKeyLock.wait();
+                }
+                return queryKeyCursor;
+            }
+
+            //return cursor;
+        }
+        catch (NoSuchAlgorithmException e){
+            Log.e(TAG, "Insert Helper - NoSuchAlgorithmException");
+            return new MatrixCursor(new String[]{KEY, VALUE});
+        }
+        catch (JSONException e){
+            Log.e(TAG, "Insert Helper - JSON Exception");
+            return new MatrixCursor(new String[]{KEY, VALUE});
+        }
+        catch (InterruptedException e){
+            Log.e(TAG, "Insert Helper - Interrupted Exception");
+            return new MatrixCursor(new String[]{KEY, VALUE});
+        }
+    }
+
+    public void queryKeyMessageHelper(JSONObject strMsgReceived){
+        try {
+            String key = (String) strMsgReceived.get(KEY);
+            String keyHash = this.genHash(key);
+            String from = (String) strMsgReceived.get(MSG_FROM);
+            if ((keyHash.compareTo(Node.getMyPort_hash()) == 0) ||
+                    (Node.getPrePort().compareTo(Node.getMyPort()) == 0) ||
+                    (keyHash.compareTo(Node.getMyPort_hash()) < 0 && keyHash.compareTo(Node.getPrePort_hash()) > 0) ||
+                    (keyHash.compareTo(Node.getMyPort_hash()) < 0 && Node.getPrePort_hash().compareTo(Node.getMyPort_hash()) > 0) ||
+                    (keyHash.compareTo(Node.getMyPort_hash()) > 0 && Node.getPrePort_hash().compareTo(Node.getMyPort_hash()) > 0
+                            && keyHash.compareTo(Node.getPrePort_hash()) > 0)) {
+
+                Cursor cursor = db.query(TABLE_NAME, null, "key = '" + key + "'", null, null, null, null);
+                String keyRes = "";
+                String valueRes = "";
+                while (cursor.moveToNext()) {
+                    keyRes = cursor.getString(cursor.getColumnIndex(KEY));
+                    valueRes = cursor.getString(cursor.getColumnIndex(VALUE));
+                }
+                String msg = (new JSONObject()
+                        .put(MSG_TYPE,TYPE_QUERY_KEY_RESPONSE)
+                        .put(MSG_FROM,Node.getMyPort())
+                        .put(KEY,keyRes)
+                        .put(VALUE,valueRes)).toString();
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, from);
+            }
+
+            // Move to successor
+            else if (keyHash.compareTo(Node.getMyPort_hash()) > 0) {
+                String msg = (new JSONObject()
+                        .put(MSG_TYPE,TYPE_QUERY_KEY)
+                        .put(MSG_FROM,from)
+                        .put(KEY,key)).toString();
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
+            }
+            // Move to my predecessor
+            else {
+                String msg = (new JSONObject()
+                        .put(MSG_TYPE,TYPE_QUERY_KEY)
+                        .put(MSG_FROM,from)
+                        .put(KEY,key)).toString();
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getPrePort());
+            }
+        }
+        catch (NoSuchAlgorithmException e){
+            Log.e(TAG, "query key message Helper - NoSuchAlgorithmException");
+        }
+        catch (JSONException e){
+            Log.e(TAG, "query key message Helper - JSON Exception");
+        }
     }
 
     @Override
@@ -370,8 +530,106 @@ public class SimpleDhtProvider extends ContentProvider {
                     Socket newSocket = serverSocket.accept();
                     DataInputStream inputStream = new DataInputStream(newSocket.getInputStream());
                     String strReceived = inputStream.readUTF().trim();
-                    //JSONObject obj = new JSONObject(strReceived);
-                    publishProgress(strReceived);
+                    JSONObject obj = new JSONObject(strReceived);
+                    String msgType = (String) obj.get(MSG_TYPE);
+
+                    // Handling message of type 'queryallres'
+                    if(msgType.trim().equals(TYPE_QUERY_ALL_RESPONSE)){
+                        int resultCount = Integer.parseInt((String)obj.get(MSG_QUERY_RES_COUNT));
+                        for(int i = 1;i<=resultCount;i++){
+                            String keyName = MSG_QUERY_RES_KEY + Integer.toString(i);
+                            String valueName = MSG_QUERY_RES_VALUE + Integer.toString(i);
+                            String ki = (String) obj.get(keyName);
+                            String vi = (String) obj.get(valueName);
+                            queryAllCursor.addRow(new Object[]{ki,vi});
+                        }
+                        queryAllCount ++;
+                        if(((String)obj.get(MSG_FROM)).equals(Node.getPrePort()))
+                            queryAllTotalCount = Integer.parseInt((String)obj.get(MSG_COUNT));
+
+                        if(queryAllTotalCount == queryAllCount) {
+                            synchronized (queryAllLock) {
+                                queryAllLock.notify();
+                            }
+                        }
+                    }
+
+                    // Handling message of type 'queryall'
+                    if(msgType.trim().equals(TYPE_QUERY_ALL)){
+                        String from = (String) obj.get(MSG_FROM);
+                        if(!from.equals(Node.getMyPort())){
+                            int cnt = Integer.parseInt((String)obj.get(MSG_COUNT));
+                            Cursor cursor = db.query(TABLE_NAME,null,null,null,null,null,null);
+                            JSONObject obj1 = new JSONObject()
+                                    .put(MSG_TYPE,TYPE_QUERY_ALL_RESPONSE)
+                                    .put(MSG_COUNT,Integer.toString(cnt+1))
+                                    .put(MSG_FROM,Node.getMyPort());
+                            int i = 1;
+                            while (cursor.moveToNext()) {
+                                String k = cursor.getString(cursor.getColumnIndex(KEY));
+                                String v = cursor.getString(cursor.getColumnIndex(VALUE));
+                                String keyName = MSG_QUERY_RES_KEY + Integer.toString(i);
+                                String valueName = MSG_QUERY_RES_VALUE + Integer.toString(i);
+                                obj1.put(keyName,k);
+                                obj1.put(valueName,v);
+                                i += 1;
+                            }
+
+                            obj1.put(MSG_QUERY_RES_COUNT,Integer.toString(i-1));
+                            String msg1 = obj1.toString();
+                            new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg1, from);
+
+                            String msg2 = (new JSONObject()
+                                    .put(MSG_TYPE,TYPE_QUERY_ALL)
+                                    .put(MSG_FROM,from)
+                                    .put(MSG_COUNT,Integer.toString(cnt+1))).toString();
+                            new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg2, Node.getSucPort());
+                        }
+                    }
+
+                    // Handling message of type 'querykey'
+                    if(msgType.trim().equals(TYPE_QUERY_KEY)){
+                        String from = (String) obj.get(MSG_FROM);
+                        if(from.equals(Node.getMyPort())){
+                            synchronized (queryKeyLock) {
+                                queryKeyLock.notify();
+                            }
+                        }
+                        else{
+                            queryKeyMessageHelper(obj);
+                        }
+                    }
+
+                    // Handling message of type 'querykeyres'
+                    if(msgType.trim().equals(TYPE_QUERY_KEY_RESPONSE)){
+                        String keyRes = (String) obj.get(KEY);
+                        String valueRes = (String) obj.get(VALUE);
+                        queryKeyCursor.addRow(new Object[]{keyRes,valueRes});
+                        synchronized (queryKeyLock) {
+                            queryKeyLock.notify();
+                        }
+                    }
+
+                    // Handling message of type 'insert'
+                    if(msgType.trim().equals(TYPE_INSERT)){
+                        ContentValues cv = new ContentValues();
+                        cv.put(KEY, (String)obj.get(KEY));
+                        cv.put(VALUE, (String)obj.get(VALUE));
+                        insertHelper(cv);
+                    }
+
+                    // Handling message of type 'joinhandle'
+                    if(msgType.trim().equals(TYPE_JOIN_HANDLE)){
+                        nodeJoinHandler(obj);
+                    }
+
+                    // Handling message of type 'join'
+                    if(msgType.trim().equals(TYPE_JOIN)){
+                        joinNodes(obj);
+                    }
+
+                    //publishProgress(strReceived);
+
                     inputStream.close();
                     newSocket.close();
                 }
@@ -381,9 +639,9 @@ public class SimpleDhtProvider extends ContentProvider {
                 Log.e(TAG, "Server Socket IOException");
                 e.printStackTrace();
             }
-            /*catch (JSONException e){
+            catch (JSONException e){
                 Log.e(TAG, "Server Task JSON Exception");
-            }*/
+            }
 
             return null;
         }
@@ -393,28 +651,6 @@ public class SimpleDhtProvider extends ContentProvider {
             /*
              * The following code displays what is received in doInBackground().
              */
-                String strReceived = strings[0].trim();
-                JSONObject obj = new JSONObject(strReceived);
-                String msgType = (String) obj.get(MSG_TYPE);
-
-                // Handling message of type 'insert'
-                if(msgType.trim().equals(TYPE_INSERT)){
-                    ContentValues cv = new ContentValues();
-                    cv.put(KEY, (String)obj.get(KEY));
-                    cv.put(VALUE, (String)obj.get(VALUE));
-                    insertHelper(cv);
-                }
-
-                // Handling message of type 'joinhandle'
-                if(msgType.trim().equals(TYPE_JOIN_HANDLE)){
-                    nodeJoinHandler(obj);
-                }
-
-                // Handling message of type 'join'
-                if(msgType.trim().equals(TYPE_JOIN)){
-                    joinNodes(obj);
-                }
-
             }
             /*catch (JSONException e){
                 Log.e(TAG, "failed in onProgressUpdate - JSON Exception");
