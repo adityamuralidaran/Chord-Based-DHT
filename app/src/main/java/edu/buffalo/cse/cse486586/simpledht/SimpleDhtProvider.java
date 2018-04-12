@@ -79,13 +79,13 @@ public class SimpleDhtProvider extends ContentProvider {
 
 
     // Lock for Query All Statement
-    public static Lock queryAllLock = new ReentrantLock();
+    public final static Lock queryAllLock = new ReentrantLock();
     public static MatrixCursor queryAllCursor;
     public static int queryAllCount = 0;
     public static int queryAllTotalCount = -1;
 
     // Lock for Query Key Statement
-    public static Lock queryKeyLock = new ReentrantLock();
+    public final static Lock queryKeyLock = new ReentrantLock();
     public static MatrixCursor queryKeyCursor;
 
 
@@ -295,6 +295,8 @@ public class SimpleDhtProvider extends ContentProvider {
                 String v = cursor.getString(cursor.getColumnIndex(VALUE));
                 queryAllCursor.addRow(new Object[]{k, v});
             }
+            cursor.close();
+
             if(!Node.getPrePort().equals(Node.getMyPort())) {
                 try {
                     String msg = (new JSONObject().put(MSG_TYPE, TYPE_QUERY_ALL)
@@ -404,6 +406,7 @@ public class SimpleDhtProvider extends ContentProvider {
                     keyRes = cursor.getString(cursor.getColumnIndex(KEY));
                     valueRes = cursor.getString(cursor.getColumnIndex(VALUE));
                 }
+                cursor.close();
                 String msg = (new JSONObject()
                         .put(MSG_TYPE,TYPE_QUERY_KEY_RESPONSE)
                         .put(MSG_FROM,Node.getMyPort())
@@ -460,6 +463,7 @@ public class SimpleDhtProvider extends ContentProvider {
         try {
             String new_node = (String) obj.get(MSG_NEWNODE);
             String new_node_hash = genHash(new_node);
+
             // if the current node is the only node in the chord
             if(Node.getMyPort().compareTo(Node.getPrePort()) == 0){
                 Node.setPrePort(new_node);
@@ -471,10 +475,10 @@ public class SimpleDhtProvider extends ContentProvider {
                             .put(MSG_PREDECESSOR,Node.getMyPort())
                             .put(MSG_SUCCESSOR,Node.getMyPort())
                             .put(MSG_FROM,Node.getMyPort())).toString();
-
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, new_node);
             }
 
+            // New node between current node and successor
             else if(new_node_hash.compareTo(Node.getMyPort_hash()) > 0 &&
                    (new_node_hash.compareTo(Node.getSucPort_hash()) < 0 ||
                     Node.getSucPort_hash().compareTo(Node.getMyPort_hash()) < 0)){
@@ -494,8 +498,10 @@ public class SimpleDhtProvider extends ContentProvider {
                         .put(MSG_SUCCESSOR,MSG_EMPTY)
                         .put(MSG_FROM,Node.getMyPort())).toString();
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg2, temp);
+
             }
 
+            // New Node between current node and predecessor
             else if(new_node_hash.compareTo(Node.getMyPort_hash()) < 0 &&
                     (new_node_hash.compareTo(Node.getPrePort_hash()) > 0 ||
                     Node.getPrePort_hash().compareTo(Node.getMyPort_hash()) > 0)){
@@ -517,6 +523,7 @@ public class SimpleDhtProvider extends ContentProvider {
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg2, temp);
             }
 
+            // If none above, pass to my successor to handle the request
             else if(new_node_hash.compareTo(Node.getMyPort_hash()) > 0){
                 String msg = (new JSONObject()
                         .put(MSG_TYPE,TYPE_JOIN_HANDLE)
@@ -525,6 +532,7 @@ public class SimpleDhtProvider extends ContentProvider {
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
             }
 
+            // If none above, pass to my predecessor to handle the request
             else if(new_node_hash.compareTo(Node.getMyPort_hash()) < 0){
                 String msg = (new JSONObject()
                         .put(MSG_TYPE,TYPE_JOIN_HANDLE)
@@ -559,6 +567,7 @@ public class SimpleDhtProvider extends ContentProvider {
                 Node.setSucPort(successor);
                 Node.setSucPort_hash(genHash(successor));
             }
+
             Log.v(TAG, "successor node : "+Node.getSucPort());
             Log.v(TAG, "predecessor node : "+Node.getPrePort());
          }
@@ -642,6 +651,7 @@ public class SimpleDhtProvider extends ContentProvider {
                                 obj1.put(valueName,v);
                                 i += 1;
                             }
+                            cursor.close();
 
                             obj1.put(MSG_QUERY_RES_COUNT,Integer.toString(i-1));
                             String msg1 = obj1.toString();
@@ -695,6 +705,7 @@ public class SimpleDhtProvider extends ContentProvider {
                     if(msgType.trim().equals(TYPE_JOIN)){
                         joinNodes(obj);
                     }
+
 
                     //publishProgress(strReceived);
 
