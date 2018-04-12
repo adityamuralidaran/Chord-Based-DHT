@@ -300,8 +300,9 @@ public class SimpleDhtProvider extends ContentProvider {
                     String msg = (new JSONObject().put(MSG_TYPE, TYPE_QUERY_ALL)
                             .put(MSG_COUNT, "0")
                             .put(MSG_FROM, Node.getMyPort())).toString();
-                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
+
                     synchronized (queryAllLock) {
+                        new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
                         queryAllLock.wait();
                     }
 
@@ -345,8 +346,9 @@ public class SimpleDhtProvider extends ContentProvider {
                         .put(MSG_TYPE,TYPE_QUERY_KEY)
                         .put(MSG_FROM,Node.getMyPort())
                         .put(KEY,key)).toString();
-                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
+
                 synchronized (queryKeyLock) {
+                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getSucPort());
                     queryKeyLock.wait();
                 }
 
@@ -359,8 +361,9 @@ public class SimpleDhtProvider extends ContentProvider {
                         .put(MSG_TYPE,TYPE_QUERY_KEY)
                         .put(MSG_FROM,Node.getMyPort())
                         .put(KEY,key)).toString();
-                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getPrePort());
+
                 synchronized (queryKeyLock) {
+                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, Node.getPrePort());
                     queryKeyLock.wait();
                 }
                 return queryKeyCursor;
