@@ -40,7 +40,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class SimpleDhtProvider extends ContentProvider {
 
-    //Code Source: Project 2b
+    // Constant message variables and message types.
     static final String TAG = SimpleDhtProvider.class.getSimpleName();
     static final int SERVER_PORT = 10000;
     static final String KEY = "key";
@@ -67,7 +67,7 @@ public class SimpleDhtProvider extends ContentProvider {
     static final String TYPE_DELETE_KEY = "deletekey"; // type to handle delete key request
 
     static final String JOIN_HANDLE_PORT = "5554"; // port number that will be handling the node join request
-    //Code Source Projecr 2b
+    // DB to store all the key value pairs.
     public static String DB_NAME = "GroupMessenger.db";
     public static String TABLE_NAME = "MessageHistory";
     public static String Create_Query = "CREATE TABLE " + TABLE_NAME +
@@ -118,7 +118,6 @@ public class SimpleDhtProvider extends ContentProvider {
     @Override
     public boolean onCreate() {
         try {
-            // Code Source: project 2b
             Log.v(TAG, "into on create");
             TelephonyManager tel = (TelephonyManager) this.getContext().getSystemService(Context.TELEPHONY_SERVICE);
             String portStr = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
@@ -162,10 +161,12 @@ public class SimpleDhtProvider extends ContentProvider {
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
 
+        // delete all the keys in the given node.
         if(selection.equals("@")){
             return db.delete(TABLE_NAME,null,selectionArgs);
         }
 
+        // delete all the keys in all the nodes.
         if(selection.equals("*")){
             if(!Node.getPrePort().equals(Node.getMyPort())){
                 try {
@@ -191,6 +192,8 @@ public class SimpleDhtProvider extends ContentProvider {
     public void deleteHelper(String key){
         try{
             String keyHash = this.genHash(key);
+
+            // To find the position of a given key in the chord DHT based on the hash value.
             if ((keyHash.compareTo(Node.getMyPort_hash()) == 0) ||
                     (Node.getPrePort().compareTo(Node.getMyPort()) == 0)||
                     (keyHash.compareTo(Node.getMyPort_hash()) < 0 && keyHash.compareTo(Node.getPrePort_hash()) > 0) ||
@@ -282,12 +285,13 @@ public class SimpleDhtProvider extends ContentProvider {
 
         Log.v("query", selection);
 
+        // select all the key-value pairs in the given node.
         if (selection.equals("@")) {
             Cursor cursor = db.query(TABLE_NAME, projection, null, selectionArgs, null, null, sortOrder);
             return cursor;
         }
+        // select all the key-value pairs in all the nodes.
         if (selection.equals("*")) {
-            // TODO: change required
             Cursor cursor = db.query(TABLE_NAME, projection, null, selectionArgs, null, null, sortOrder);
             queryAllCursor = new MatrixCursor(new String[]{KEY, VALUE});
             while (cursor.moveToNext()) {
@@ -331,6 +335,7 @@ public class SimpleDhtProvider extends ContentProvider {
         try {
             String key = selection;
             String keyHash = this.genHash(key);
+            // select a given key based on its position in the chord DHT.
             if ((keyHash.compareTo(Node.getMyPort_hash()) == 0) ||
                     (Node.getPrePort().compareTo(Node.getMyPort()) == 0) ||
                     (keyHash.compareTo(Node.getMyPort_hash()) < 0 && keyHash.compareTo(Node.getPrePort_hash()) > 0) ||
@@ -442,7 +447,6 @@ public class SimpleDhtProvider extends ContentProvider {
 
     @Override
     public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
-        // Code Source Project 2b
         long temp = db.update(TABLE_NAME,values,selection+ " = ?",selectionArgs);
         return 0;
     }
@@ -458,7 +462,8 @@ public class SimpleDhtProvider extends ContentProvider {
         return formatter.toString();
     }
 
-    // Node Join Request Handler
+    // Node Join Request Handler called when a new node joins the chord DHT.
+    // The node position is determined by the lexicographical order of its hash value.
     public void nodeJoinHandler(JSONObject obj){
         try {
             String new_node = (String) obj.get(MSG_NEWNODE);
