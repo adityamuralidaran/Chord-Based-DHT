@@ -585,7 +585,6 @@ public class SimpleDhtProvider extends ContentProvider {
     }
 
     // Server Class
-    // Code Source Project 2b
     private class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 
         @Override
